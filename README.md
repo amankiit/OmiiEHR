@@ -1,4 +1,4 @@
-# OmniEHR
+# OmiiEHR
 <img width="1470" height="831" alt="Screenshot 2026-02-22 at 4 02 12 PM" src="https://github.com/user-attachments/assets/81b1027a-099c-4339-8eea-722f004b1bc1" />
 
 

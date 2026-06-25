@@ -2,7 +2,8 @@ const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || "http://localhost:4000
 
 const readResponse = async (response) => {
   const contentType = response.headers.get("content-type") || "";
-  const isJson = contentType.includes("application/json");
+  // Matches both application/json and the FHIR media type application/fhir+json.
+  const isJson = contentType.includes("json");
 
   const payload = isJson ? await response.json() : await response.text();
 
@@ -10,7 +11,11 @@ const readResponse = async (response) => {
     const message =
       typeof payload === "string"
         ? payload || "Request failed"
-        : payload.message || payload.error || "Request failed";
+        : payload.message ||
+          payload.error ||
+          // FHIR errors arrive as an OperationOutcome resource.
+          payload.issue?.[0]?.diagnostics ||
+          "Request failed";
 
     const error = new Error(message);
     error.status = response.status;

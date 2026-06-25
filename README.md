@@ -2,7 +2,7 @@
 <img width="1470" height="831" alt="Screenshot 2026-02-22 at 4 02 12 PM" src="https://github.com/user-attachments/assets/81b1027a-099c-4339-8eea-722f004b1bc1" />
 
 
-Electronic Health Record application with FHIR R4-shaped APIs and HIPAA-aligned controls.
+Electronic Health Record application with FHIR R4-compliant APIs and HIPAA-aligned controls.
 
 Access here:
 https://omni-ehr.vercel.app
@@ -27,7 +27,10 @@ This repository implements major technical safeguards (access control, audit tra
 
 - Backend: Node.js, Express, MongoDB (Mongoose), JWT auth
 - Frontend: React + Vite
-- Standards: FHIR R4 resource patterns (`Patient`, `Observation`, `Condition`, `AllergyIntolerance`, `MedicationRequest`, `Encounter`, `Appointment`)
+- Standards: FHIR R4 resources (`Patient`, `Observation`, `Condition`, `AllergyIntolerance`, `MedicationRequest`, `Encounter`, `Appointment`, `Task`). Non-standard data is carried as FHIR extensions rather than ad-hoc fields, so emitted resources conform to the R4 structure:
+  - `Patient.extension` — `patient-registration-status`, `patient-registration-source`
+  - `Appointment.extension` — `appointment-requested-by-patient`
+  - (extension base URL: `https://omiiehr.com/fhir/StructureDefinition`)
 - Security controls: RBAC, bcrypt, AES-256-GCM field encryption for PHI, audit logs, rate limiting, input validation
 
 ## Major EHR features
@@ -54,66 +57,91 @@ This repository implements major technical safeguards (access control, audit tra
 - Care-team task management (`Task`) with assignment, due dates, and status workflow
 - Audit log review for admin/auditor roles
 
-## FHIR API endpoints
+## API reference
 
-Base: `/api/fhir`
+All endpoints are served under `/api`. Protected endpoints require an `Authorization: Bearer <JWT>` header (obtained from `POST /api/auth/login`). Roles are `admin`, `practitioner`, and `auditor`.
 
-- `GET /metadata`
+### Authentication — `/api/auth`
 
-Patient:
-- `POST /Patient`
-- `GET /Patient`
-- `GET /Patient/:id`
-- `PUT /Patient/:id`
-- `GET /Patient/:id/$everything`
+| Method | Path | Access | Description |
+| --- | --- | --- | --- |
+| `POST` | `/api/auth/login` | Public | Exchange email + password for a JWT and user profile. |
+| `GET` | `/api/auth/me` | Authenticated | Return the current authenticated user. |
 
-Observation:
-- `POST /Observation`
-- `GET /Observation`
-- `GET /Observation/:id`
-- `PUT /Observation/:id`
+### Public (patient portal) — `/api/public`
 
-Condition:
-- `POST /Condition`
-- `GET /Condition`
-- `GET /Condition/:id`
-- `PUT /Condition/:id`
+No authentication; rate-limited. Returns no PHI except to the registering patient.
 
-AllergyIntolerance:
-- `POST /AllergyIntolerance`
-- `GET /AllergyIntolerance`
-- `GET /AllergyIntolerance/:id`
-- `PUT /AllergyIntolerance/:id`
+| Method | Path | Description |
+| --- | --- | --- |
+| `POST` | `/api/public/patient-register` | Patient self-registration; assigns a 7-digit PID and creates a pending (`requested`) patient. |
+| `GET` | `/api/public/practitioners` | List bookable active practitioners (id, name, specialty). |
+| `GET` | `/api/public/availability?practitionerId=&date=` | Taken 15-minute slots for a practitioner on a `YYYY-MM-DD` date. |
+| `POST` | `/api/public/appointment-request` | Patient-initiated appointment request (created as `proposed` for staff approval). |
 
-MedicationRequest:
-- `POST /MedicationRequest`
-- `GET /MedicationRequest`
-- `GET /MedicationRequest/:id`
-- `PUT /MedicationRequest/:id`
+### FHIR R4 — `/api/fhir`
 
-Encounter:
-- `POST /Encounter`
-- `GET /Encounter`
-- `GET /Encounter/:id`
-- `PUT /Encounter/:id`
+Bearer JWT required. Access roles: **read** = `admin`, `practitioner`, `auditor`; **write** = `admin`, `practitioner`; **Patient create** = `admin` only; **Patient edit** = `admin`, `practitioner`. Responses use `application/fhir+json`.
 
-Appointment:
-- `POST /Appointment`
-- `GET /Appointment`
-- `GET /Appointment/:id`
-- `PUT /Appointment/:id`
+Conformance notes:
+- All responses use the FHIR media type `application/fhir+json` (requests in `application/json` or `application/fhir+json` are accepted).
+- Errors are returned as `OperationOutcome` resources (with `issue[].severity/code/diagnostics`, and `expression` FHIRPath pointers for validation failures).
+- Search responses are `searchset` `Bundle`s with `total` and a `self` `Bundle.link`.
 
-Task:
-- `POST /Task`
-- `GET /Task`
-- `GET /Task/:id`
-- `PUT /Task/:id`
+| Method | Path | Access | Notes |
+| --- | --- | --- | --- |
+| `GET` | `/api/fhir/metadata` | read | `CapabilityStatement` (FHIR version 4.0.1). |
+| `POST` | `/api/fhir/Patient` | admin | Create patient (auto-assigns PID identifier). |
+| `GET` | `/api/fhir/Patient` | read | Search. Params: `identifier`, `name`/`search` (free text). |
+| `GET` | `/api/fhir/Patient/:id` | read | Read one patient. |
+| `PUT` | `/api/fhir/Patient/:id` | admin, practitioner | Update demographics. |
+| `GET` | `/api/fhir/Patient/:id/$everything` | read | Longitudinal record `Bundle` (all linked resources). |
+| `POST` | `/api/fhir/Observation` | write | Create observation/vital. |
+| `GET` | `/api/fhir/Observation` | read | Search. Params: `subject=Patient/{id}`. |
+| `GET` | `/api/fhir/Observation/:id` | read | Read one. |
+| `PUT` | `/api/fhir/Observation/:id` | write | Update. |
+| `POST` | `/api/fhir/Condition` | write | Create problem-list entry. |
+| `GET` | `/api/fhir/Condition` | read | Search. Params: `subject=Patient/{id}`. |
+| `GET` | `/api/fhir/Condition/:id` | read | Read one. |
+| `PUT` | `/api/fhir/Condition/:id` | write | Update. |
+| `POST` | `/api/fhir/AllergyIntolerance` | write | Create allergy. |
+| `GET` | `/api/fhir/AllergyIntolerance` | read | Search. Params: `patient=Patient/{id}`. |
+| `GET` | `/api/fhir/AllergyIntolerance/:id` | read | Read one. |
+| `PUT` | `/api/fhir/AllergyIntolerance/:id` | write | Update. |
+| `POST` | `/api/fhir/MedicationRequest` | write | Create medication order. |
+| `GET` | `/api/fhir/MedicationRequest` | read | Search. Params: `subject=Patient/{id}`. |
+| `GET` | `/api/fhir/MedicationRequest/:id` | read | Read one. |
+| `PUT` | `/api/fhir/MedicationRequest/:id` | write | Update. |
+| `POST` | `/api/fhir/Encounter` | write | Create encounter. |
+| `GET` | `/api/fhir/Encounter` | read | Search. Params: `subject=Patient/{id}`, `appointment=Appointment/{id}`. |
+| `GET` | `/api/fhir/Encounter/:id` | read | Read one. |
+| `PUT` | `/api/fhir/Encounter/:id` | write | Update. |
+| `POST` | `/api/fhir/Appointment` | write | Book appointment (enforces slot/availability rules). |
+| `GET` | `/api/fhir/Appointment` | read | Search. Params: `patient=Patient/{id}`, `practitioner=Practitioner/{id}`, `from`, `to`. Practitioners see only their own schedule. |
+| `GET` | `/api/fhir/Appointment/:id` | read | Read one. |
+| `PUT` | `/api/fhir/Appointment/:id` | write | Update/reschedule (syncs encounter on check-in/fulfilment). |
+| `POST` | `/api/fhir/Task` | write | Create care-team task. |
+| `GET` | `/api/fhir/Task` | read | Search. Params: `for=Patient/{id}`, `status`, `owner=Practitioner/{id}`. |
+| `GET` | `/api/fhir/Task/:id` | read | Read one. |
+| `PUT` | `/api/fhir/Task/:id` | write | Update status/assignment. |
 
-Admin:
-- `GET /api/admin/practitioners`
+### Admin — `/api/admin`
 
-Public:
-- `POST /api/public/patient-register`
+Bearer JWT required.
+
+| Method | Path | Access | Description |
+| --- | --- | --- | --- |
+| `GET` | `/api/admin/users` | admin | List all users. |
+| `POST` | `/api/admin/users` | admin | Provision a user (including additional admins). |
+| `POST` | `/api/admin/patients/:id/approve` | admin | Approve a portal-registered patient (sets `active`). |
+| `GET` | `/api/admin/practitioners` | admin, practitioner | List practitioners (practitioners see only themselves). |
+| `GET` | `/api/admin/audit-logs` | admin, auditor | Paginated audit log. Params: `page`, `limit`, `outcome`, `resourceType`, `actorEmail`. |
+
+### System
+
+| Method | Path | Access | Description |
+| --- | --- | --- | --- |
+| `GET` | `/api/health` | Public | Liveness check. |
 
 ## HIPAA-aligned controls in code
 

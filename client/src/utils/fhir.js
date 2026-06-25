@@ -1,3 +1,27 @@
+// Canonical URLs for the local extensions emitted by the API for data that has no
+// standard FHIR R4 element. Must match server/src/services/fhirMapper.js.
+const EXTENSION_BASE = "https://omiiehr.com/fhir/StructureDefinition";
+export const PATIENT_REGISTRATION_STATUS_EXTENSION = `${EXTENSION_BASE}/patient-registration-status`;
+export const PATIENT_REGISTRATION_SOURCE_EXTENSION = `${EXTENSION_BASE}/patient-registration-source`;
+
+// Reads a primitive value from a resource extension by canonical url, returning the
+// first defined value[x] regardless of its FHIR type (valueCode, valueBoolean, ...).
+export const readExtensionValue = (resource, url) => {
+  const extension = (resource?.extension || []).find((entry) => entry.url === url);
+  if (!extension) {
+    return undefined;
+  }
+
+  const valueKey = Object.keys(extension).find((key) => key.startsWith("value"));
+  return valueKey ? extension[valueKey] : undefined;
+};
+
+export const patientRegistrationStatus = (patient) =>
+  readExtensionValue(patient, PATIENT_REGISTRATION_STATUS_EXTENSION) || "active";
+
+export const patientRegistrationSource = (patient) =>
+  readExtensionValue(patient, PATIENT_REGISTRATION_SOURCE_EXTENSION) || "staff";
+
 export const bundleToResources = (bundle) => {
   if (!bundle?.entry || !Array.isArray(bundle.entry)) {
     return [];

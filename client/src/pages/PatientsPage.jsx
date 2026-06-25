@@ -1,7 +1,14 @@
 import { useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { adminApi, fhirApi } from "../api.js";
-import { bundleToResources, patientFullName, patientMrn, patientPid } from "../utils/fhir.js";
+import {
+  bundleToResources,
+  patientFullName,
+  patientMrn,
+  patientPid,
+  patientRegistrationStatus,
+  patientRegistrationSource
+} from "../utils/fhir.js";
 import { calculateAge, genderShort, initialsOf } from "../utils/display.js";
 import { useAuth } from "../context/AuthContext.jsx";
 import { useToast } from "../components/Toast.jsx";
@@ -57,7 +64,7 @@ const PatientsPage = () => {
   const filtered = useMemo(() => {
     const term = query.trim().toLowerCase();
     return patients.filter((patient) => {
-      const status = patient.registrationStatus || "active";
+      const status = patientRegistrationStatus(patient);
       if (statusFilter !== "all" && status !== statusFilter) {
         return false;
       }
@@ -72,7 +79,7 @@ const PatientsPage = () => {
   }, [patients, query, statusFilter]);
 
   const requestedCount = useMemo(
-    () => patients.filter((patient) => (patient.registrationStatus || "active") === "requested").length,
+    () => patients.filter((patient) => patientRegistrationStatus(patient) === "requested").length,
     [patients]
   );
 
@@ -211,7 +218,7 @@ const PatientsPage = () => {
                 <tbody>
                   {pageItems.map((patient) => {
                     const age = calculateAge(patient.birthDate);
-                    const status = patient.registrationStatus || "active";
+                    const status = patientRegistrationStatus(patient);
                     const requested = status === "requested";
                     return (
                       <tr key={patient.id} className="row-clickable" onClick={() => navigate(`/patients/${patient.id}`)}>
@@ -233,7 +240,7 @@ const PatientsPage = () => {
                           <Badge tone={requested ? "warning" : "success"} dot>
                             {requested ? "inactive" : "active"}
                           </Badge>
-                          {patient.registrationSource === "portal" ? <span className="sub">via portal</span> : null}
+                          {patientRegistrationSource(patient) === "portal" ? <span className="sub">via portal</span> : null}
                         </td>
                         {isAdmin ? (
                           <td style={{ textAlign: "right" }}>

@@ -2,6 +2,14 @@ import { encryptPhi, decryptPhi } from "./cryptoService.js";
 import { ApiError } from "../utils/apiError.js";
 import { PID_SYSTEM } from "./patientPidService.js";
 
+// FHIR R4 has no standard element for these locally-meaningful fields, so they are
+// carried as extensions (url + value[x]) instead of ad-hoc top-level properties.
+// This keeps every emitted resource conformant with the FHIR R4 structure.
+const EXTENSION_BASE = "https://omiiehr.com/fhir/StructureDefinition";
+export const PATIENT_REGISTRATION_STATUS_EXTENSION = `${EXTENSION_BASE}/patient-registration-status`;
+export const PATIENT_REGISTRATION_SOURCE_EXTENSION = `${EXTENSION_BASE}/patient-registration-source`;
+export const APPOINTMENT_REQUESTED_BY_PATIENT_EXTENSION = `${EXTENSION_BASE}/appointment-requested-by-patient`;
+
 const dateOnlyToDate = (value) => {
   if (!value) {
     return undefined;
@@ -170,10 +178,18 @@ export const patientDocToResource = (doc) => {
       versionId: String(doc.__v),
       lastUpdated: doc.updatedAt?.toISOString()
     },
+    extension: [
+      {
+        url: PATIENT_REGISTRATION_STATUS_EXTENSION,
+        valueCode: doc.registrationStatus || "active"
+      },
+      {
+        url: PATIENT_REGISTRATION_SOURCE_EXTENSION,
+        valueCode: doc.registrationSource || "staff"
+      }
+    ],
     identifier,
     active: doc.active,
-    registrationStatus: doc.registrationStatus || "active",
-    registrationSource: doc.registrationSource || "staff",
     name: [
       {
         use: "official",
@@ -661,6 +677,12 @@ export const appointmentDocToResource = (doc) => {
       versionId: String(doc.__v),
       lastUpdated: doc.updatedAt?.toISOString()
     },
+    extension: [
+      {
+        url: APPOINTMENT_REQUESTED_BY_PATIENT_EXTENSION,
+        valueBoolean: Boolean(doc.requestedByPatient)
+      }
+    ],
     status: doc.status,
     description: doc.description,
     serviceCategory: doc.serviceCategory ? [{ text: doc.serviceCategory }] : undefined,
@@ -668,7 +690,6 @@ export const appointmentDocToResource = (doc) => {
     end: toDateTime(doc.end),
     minutesDuration: doc.minutesDuration,
     participant,
-    requestedByPatient: Boolean(doc.requestedByPatient),
     reasonCode: doc.reason ? [{ text: doc.reason }] : undefined,
     comment: doc.comment
   };
@@ -735,7 +756,8 @@ export const toSearchsetBundle = ({
   resources,
   baseUrl,
   total,
-  searchId
+  searchId,
+  selfUrl
 }) => {
   return {
     resourceType: "Bundle",
@@ -743,10 +765,42 @@ export const toSearchsetBundle = ({
     type: "searchset",
     timestamp: new Date().toISOString(),
     total,
+    link: selfUrl ? [{ relation: "self", url: selfUrl }] : undefined,
     entry: resources.map((resource) => ({
       fullUrl: `${baseUrl}/${resourceType}/${resource.id}`,
       resource,
       search: { mode: "match" }
+    }))
+  };
+};
+
+// Maps an HTTP status to an OperationOutcome issue type so that FHIR error
+// responses are themselves valid FHIR resources, as required by the R4 REST spec.
+const ISSUE_CODE_BY_STATUS = {
+  400: "invalid",
+  401: "login",
+  403: "forbidden",
+  404: "not-found",
+  405: "not-supported",
+  409: "conflict",
+  415: "not-supported",
+  422: "processing",
+  429: "throttled",
+  500: "exception"
+};
+
+export const toOperationOutcome = (statusCode, issues = []) => {
+  const fallbackCode = ISSUE_CODE_BY_STATUS[statusCode] || "processing";
+  const defaultSeverity = statusCode >= 500 ? "fatal" : "error";
+  const list = issues.length > 0 ? issues : [{ diagnostics: "Unexpected error" }];
+
+  return {
+    resourceType: "OperationOutcome",
+    issue: list.map((issue) => ({
+      severity: issue.severity || defaultSeverity,
+      code: issue.code || fallbackCode,
+      ...(issue.diagnostics ? { diagnostics: issue.diagnostics } : {}),
+      ...(issue.expression ? { expression: issue.expression } : {})
     }))
   };
 };

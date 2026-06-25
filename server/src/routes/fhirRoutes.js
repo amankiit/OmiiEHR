@@ -48,6 +48,13 @@ import {
 
 const router = express.Router();
 
+// Every response from the FHIR API uses the FHIR JSON media type. Setting it here
+// means res.json() (which only defaults the header when unset) keeps it.
+router.use((_req, res, next) => {
+  res.type("application/fhir+json");
+  next();
+});
+
 router.use(authenticate);
 
 const readRoles = ["admin", "practitioner", "auditor"];
@@ -58,6 +65,8 @@ const patientWriteRoles = ["admin"];
 const patientEditRoles = ["admin", "practitioner"];
 
 const baseUrl = (req) => `${req.protocol}://${req.get("host")}/api/fhir`;
+// Full request URL (including search params) for Bundle.link "self".
+const selfUrl = (req) => `${req.protocol}://${req.get("host")}${req.originalUrl}`;
 
 const parsePatientReference = (value, fieldName) => {
   const [resourceType, id] = String(value || "").split("/");
@@ -293,7 +302,7 @@ router.get(
       date: new Date().toISOString(),
       kind: "instance",
       fhirVersion: "4.0.1",
-      format: ["json"],
+      format: ["application/fhir+json"],
       software: {
         name: "OmiiEHR Core",
         version: "2.0.0"
@@ -382,6 +391,7 @@ router.get(
         resources,
         total: resources.length,
         baseUrl: baseUrl(req),
+        selfUrl: selfUrl(req),
         searchId: randomUUID()
       })
     );
@@ -481,6 +491,7 @@ router.get(
       type: "searchset",
       total: allResources.length,
       timestamp: new Date().toISOString(),
+      link: [{ relation: "self", url: selfUrl(req) }],
       entry: allResources.map((resource) => ({
         fullUrl: `${baseUrl(req)}/${resource.resourceType}/${resource.id}`,
         resource,
@@ -529,6 +540,7 @@ router.get(
         resources,
         total: resources.length,
         baseUrl: baseUrl(req),
+        selfUrl: selfUrl(req),
         searchId: randomUUID()
       })
     );
@@ -615,6 +627,7 @@ router.get(
         resources,
         total: resources.length,
         baseUrl: baseUrl(req),
+        selfUrl: selfUrl(req),
         searchId: randomUUID()
       })
     );
@@ -703,6 +716,7 @@ router.get(
         resources,
         total: resources.length,
         baseUrl: baseUrl(req),
+        selfUrl: selfUrl(req),
         searchId: randomUUID()
       })
     );
@@ -791,6 +805,7 @@ router.get(
         resources,
         total: resources.length,
         baseUrl: baseUrl(req),
+        selfUrl: selfUrl(req),
         searchId: randomUUID()
       })
     );
@@ -882,6 +897,7 @@ router.get(
         resources,
         total: resources.length,
         baseUrl: baseUrl(req),
+        selfUrl: selfUrl(req),
         searchId: randomUUID()
       })
     );
@@ -1024,6 +1040,7 @@ router.get(
         resources,
         total: resources.length,
         baseUrl: baseUrl(req),
+        selfUrl: selfUrl(req),
         searchId: randomUUID()
       })
     );
@@ -1179,6 +1196,7 @@ router.get(
         resources,
         total: resources.length,
         baseUrl: baseUrl(req),
+        selfUrl: selfUrl(req),
         searchId: randomUUID()
       })
     );

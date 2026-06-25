@@ -53,6 +53,9 @@ router.use(authenticate);
 const readRoles = ["admin", "practitioner", "auditor"];
 const writeRoles = ["admin", "practitioner"];
 const patientWriteRoles = ["admin"];
+// Creating/registering patients stays admin-only, but editing demographics on an
+// existing chart is allowed for clinicians too.
+const patientEditRoles = ["admin", "practitioner"];
 
 const baseUrl = (req) => `${req.protocol}://${req.get("host")}/api/fhir`;
 
@@ -70,6 +73,103 @@ const ensurePatientExists = async (patientId) => {
 
   if (!patientExists) {
     throw new ApiError(400, "Referenced Patient does not exist");
+  }
+};
+
+// Decrypts and flattens a patient's name for denormalised storage on appointments.
+const resolvePatientName = async (patientId) => {
+  const patientDoc = await Patient.findById(patientId);
+  if (!patientDoc) {
+    return undefined;
+  }
+  const name = patientDocToResource(patientDoc).name?.[0] || {};
+  return [(name.given || []).join(" "), name.family].filter(Boolean).join(" ").trim() || undefined;
+};
+
+// Statuses that count as an "approved" appointment for practitioner patient visibility.
+const APPROVED_APPOINTMENT_STATUSES = ["booked", "arrived", "checked-in", "fulfilled"];
+
+// Patient ids a practitioner is permitted to see: those with an approved appointment
+// with them, or a prior encounter they documented.
+const visiblePatientIdsForPractitioner = async (practitionerUserId) => {
+  const [appointmentPatientIds, encounterPatientIds] = await Promise.all([
+    Appointment.find({
+      practitionerUserId,
+      status: { $in: APPROVED_APPOINTMENT_STATUSES }
+    }).distinct("patient.reference"),
+    Encounter.find({ "participant.individualUserId": practitionerUserId }).distinct("subject.reference")
+  ]);
+
+  return [...new Set([...appointmentPatientIds, ...encounterPatientIds].map(String))];
+};
+
+// Records the documenting practitioner as an encounter participant so that
+// "prior encounter with this practitioner" patient visibility works.
+const stampEncounterPerformer = async (docPayload, user) => {
+  if (user.role !== "practitioner") {
+    return docPayload;
+  }
+  const me = await User.findById(user.sub).select("fullName").lean();
+  const participant = [
+    ...(docPayload.participant || []).filter((entry) => String(entry.individualUserId) !== String(user.sub)),
+    { type: "primary performer", individualDisplay: me?.fullName, individualUserId: user.sub }
+  ];
+  return { ...docPayload, participant };
+};
+
+// When an appointment is checked in, open the clinical encounter for that visit
+// (idempotent — one encounter per appointment). Completing the visit closes it.
+const syncEncounterWithAppointment = async (appointment) => {
+  if (!appointment) {
+    return;
+  }
+
+  if (appointment.status === "checked-in") {
+    const existing = await Encounter.findOne({ "appointment.reference": appointment._id }).select("_id");
+    if (existing) {
+      return;
+    }
+    await Encounter.create({
+      status: "in-progress",
+      classCode: "AMB",
+      type: { system: "http://snomed.info/sct", code: "185349003", display: "Outpatient visit" },
+      subject: { reference: appointment.patient?.reference },
+      appointment: { reference: appointment._id },
+      periodStart: new Date(),
+      reasonCode: appointment.reason ? { display: appointment.reason } : undefined,
+      participant: [
+        {
+          type: "primary performer",
+          individualDisplay: appointment.practitionerName,
+          individualUserId: appointment.practitionerUserId
+        }
+      ]
+    });
+    return;
+  }
+
+  if (appointment.status === "fulfilled") {
+    await Encounter.updateOne(
+      { "appointment.reference": appointment._id, status: { $ne: "finished" } },
+      { status: "finished", periodEnd: new Date() }
+    );
+  }
+};
+
+const ensurePractitionerCanAccessPatient = async (user, patientId) => {
+  if (user.role !== "practitioner") {
+    return;
+  }
+  const [hasAppointment, hasEncounter] = await Promise.all([
+    Appointment.exists({
+      practitionerUserId: user.sub,
+      status: { $in: APPROVED_APPOINTMENT_STATUSES },
+      "patient.reference": patientId
+    }),
+    Encounter.exists({ "participant.individualUserId": user.sub, "subject.reference": patientId })
+  ]);
+  if (!hasAppointment && !hasEncounter) {
+    throw new ApiError(403, "You do not have access to this patient");
   }
 };
 
@@ -104,7 +204,6 @@ const ensureTaskOwnerPermission = (requestingUser, ownerUserId) => {
   }
 };
 
-const nonBlockingAppointmentStatuses = ["cancelled", "noshow", "entered-in-error"];
 const slotDurationMinutes = 15;
 const slotWindowStartMinutes = 9 * 60;
 const slotWindowEndMinutes = 12 * 60;
@@ -118,7 +217,8 @@ const ensurePractitionerAvailability = async ({
 }) => {
   const filter = {
     practitionerUserId,
-    status: { $nin: nonBlockingAppointmentStatuses },
+    // Only confirmed appointments occupy a slot; pending patient requests do not.
+    status: { $in: APPROVED_APPOINTMENT_STATUSES },
     start: { $lt: end },
     end: { $gt: start }
   };
@@ -195,7 +295,7 @@ router.get(
       fhirVersion: "4.0.1",
       format: ["json"],
       software: {
-        name: "OmniEHR Core",
+        name: "OmiiEHR Core",
         version: "2.0.0"
       },
       implementation: {
@@ -252,8 +352,29 @@ router.get(
       filter["identifier.value"] = String(req.query.identifier);
     }
 
+    // Practitioners only see patients they have an approved appointment or prior encounter with.
+    if (req.user.role === "practitioner") {
+      filter._id = { $in: await visiblePatientIdsForPractitioner(req.user.sub) };
+    }
+
     const patients = await Patient.find(filter).sort({ createdAt: -1 }).limit(100);
-    const resources = patients.map(patientDocToResource);
+    let resources = patients.map(patientDocToResource);
+
+    // Free-text search across name, identifiers (MRN/PID), and birth date. Names are
+    // encrypted at rest, so matching is done after decryption rather than in Mongo.
+    const term = String(req.query.name || req.query.search || "").trim().toLowerCase();
+    if (term) {
+      resources = resources.filter((patient) => {
+        const fullName = [(patient.name?.[0]?.given || []).join(" "), patient.name?.[0]?.family]
+          .filter(Boolean)
+          .join(" ");
+        const haystack = [fullName, ...(patient.identifier || []).map((id) => id.value), patient.birthDate]
+          .filter(Boolean)
+          .join(" ")
+          .toLowerCase();
+        return haystack.includes(term);
+      });
+    }
 
     res.json(
       toSearchsetBundle({
@@ -277,14 +398,17 @@ router.get(
       throw new ApiError(404, "Patient not found");
     }
 
+    await ensurePractitionerCanAccessPatient(req.user, req.params.id);
+
     res.json(patientDocToResource(patient));
   })
 );
 
 router.put(
   "/Patient/:id",
-  authorize(...patientWriteRoles),
+  authorize(...patientEditRoles),
   asyncHandler(async (req, res) => {
+    await ensurePractitionerCanAccessPatient(req.user, req.params.id);
     const resource = patientResourceSchema.parse(req.body);
     const docPayload = patientResourceToDoc(resource);
     const existingPatient = await Patient.findById(req.params.id).select("pid");
@@ -327,6 +451,8 @@ router.get(
     if (!patient) {
       throw new ApiError(404, "Patient not found");
     }
+
+    await ensurePractitionerCanAccessPatient(req.user, req.params.id);
 
     const [observations, conditions, allergies, medications, encounters, appointments, tasks] =
       await Promise.all([
@@ -723,7 +849,7 @@ router.post(
 
     await ensurePatientExists(docPayload.subject.reference);
 
-    const record = await Encounter.create(docPayload);
+    const record = await Encounter.create(await stampEncounterPerformer(docPayload, req.user));
 
     res.status(201).json(encounterDocToResource(record));
   })
@@ -737,6 +863,14 @@ router.get(
 
     if (req.query.subject) {
       filter["subject.reference"] = parsePatientReference(req.query.subject, "subject");
+    }
+
+    if (req.query.appointment) {
+      const [resourceType, appointmentId] = String(req.query.appointment).split("/");
+      if (resourceType !== "Appointment" || !appointmentId) {
+        throw new ApiError(400, "appointment must be in Appointment/{id} format");
+      }
+      filter["appointment.reference"] = appointmentId;
     }
 
     const records = await Encounter.find(filter).sort({ periodStart: -1, createdAt: -1 }).limit(200);
@@ -775,16 +909,30 @@ router.put(
     const resource = encounterResourceSchema.parse(req.body);
     const docPayload = encounterResourceToDoc(resource);
 
-    await ensurePatientExists(docPayload.subject.reference);
-
-    const record = await Encounter.findByIdAndUpdate(req.params.id, docPayload, {
-      new: true,
-      runValidators: true
-    });
-
-    if (!record) {
+    const existing = await Encounter.findById(req.params.id).select("appointment participant");
+    if (!existing) {
       throw new ApiError(404, "Encounter not found");
     }
+
+    await ensurePatientExists(docPayload.subject.reference);
+
+    // Preserve the appointment link and recorded performers (which carry individualUserId
+    // used for practitioner patient visibility) — these are not round-tripped via the resource.
+    if (existing.appointment?.reference) {
+      docPayload.appointment = { reference: existing.appointment.reference };
+    }
+    if (existing.participant?.length) {
+      docPayload.participant = existing.participant;
+    }
+
+    const record = await Encounter.findByIdAndUpdate(
+      req.params.id,
+      await stampEncounterPerformer(docPayload, req.user),
+      {
+        new: true,
+        runValidators: true
+      }
+    );
 
     res.json(encounterDocToResource(record));
   })
@@ -813,6 +961,7 @@ router.post(
 
     const record = await Appointment.create({
       ...docPayload,
+      patientName: await resolvePatientName(docPayload.patient.reference),
       practitionerName: practitioner?.fullName || docPayload.practitionerName,
       createdBy: req.user.sub
     });
@@ -940,6 +1089,7 @@ router.put(
       req.params.id,
       {
         ...docPayload,
+        patientName: await resolvePatientName(docPayload.patient.reference),
         practitionerName: practitioner?.fullName || docPayload.practitionerName,
         createdBy: req.user.sub
       },
@@ -952,6 +1102,8 @@ router.put(
     if (!record) {
       throw new ApiError(404, "Appointment not found");
     }
+
+    await syncEncounterWithAppointment(record);
 
     res.json(appointmentDocToResource(record));
   })

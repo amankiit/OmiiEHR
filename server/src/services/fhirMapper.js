@@ -172,6 +172,8 @@ export const patientDocToResource = (doc) => {
     },
     identifier,
     active: doc.active,
+    registrationStatus: doc.registrationStatus || "active",
+    registrationSource: doc.registrationSource || "staff",
     name: [
       {
         use: "official",
@@ -471,6 +473,19 @@ export const medicationRequestDocToResource = (doc) => {
   };
 };
 
+// FHIR Encounter.participant.type uses the v3 ParticipationType code system.
+const PARTICIPATION_TYPE_SYSTEM = "http://terminology.hl7.org/CodeSystem/v3-ParticipationType";
+const PARTICIPATION_TYPE_BY_TEXT = {
+  "primary performer": { code: "PPRF", display: "primary performer" },
+  "secondary performer": { code: "SPRF", display: "secondary performer" },
+  attender: { code: "ATND", display: "attender" }
+};
+
+const practitionerIdFromReference = (reference) => {
+  const match = /^Practitioner\/([a-fA-F0-9]{24})$/.exec(String(reference || ""));
+  return match ? match[1] : undefined;
+};
+
 export const encounterResourceToDoc = (resource) => {
   if (resource.resourceType !== "Encounter") {
     throw new ApiError(400, "Expected an Encounter resource");
@@ -501,8 +516,9 @@ export const encounterResourceToDoc = (resource) => {
     location: sanitize(resource.location?.[0]?.location?.display),
     serviceProvider: sanitize(resource.serviceProvider?.display),
     participant: (resource.participant || []).map((participant) => ({
-      type: sanitize(participant.type?.[0]?.text),
-      individualDisplay: sanitize(participant.individual?.display)
+      type: sanitize(participant.type?.[0]?.text || participant.type?.[0]?.coding?.[0]?.display),
+      individualDisplay: sanitize(participant.individual?.display),
+      individualUserId: practitionerIdFromReference(participant.individual?.reference)
     })),
     note: sanitize(resource.note?.[0]?.text)
   };
@@ -536,6 +552,9 @@ export const encounterDocToResource = (doc) => {
     subject: {
       reference: `Patient/${doc.subject?.reference}`
     },
+    appointment: doc.appointment?.reference
+      ? [{ reference: `Appointment/${doc.appointment.reference}` }]
+      : undefined,
     period: {
       start: toDateTime(doc.periodStart),
       end: toDateTime(doc.periodEnd)
@@ -551,10 +570,27 @@ export const encounterDocToResource = (doc) => {
         : undefined,
     location: doc.location ? [{ location: { display: doc.location } }] : undefined,
     serviceProvider: doc.serviceProvider ? { display: doc.serviceProvider } : undefined,
-    participant: (doc.participant || []).map((participant) => ({
-      type: participant.type ? [{ text: participant.type }] : undefined,
-      individual: participant.individualDisplay ? { display: participant.individualDisplay } : undefined
-    })),
+    participant: (doc.participant || []).map((participant) => {
+      const coded = PARTICIPATION_TYPE_BY_TEXT[participant.type];
+      const individual = {};
+      if (participant.individualUserId) {
+        individual.reference = `Practitioner/${participant.individualUserId}`;
+      }
+      if (participant.individualDisplay) {
+        individual.display = participant.individualDisplay;
+      }
+      return {
+        type: participant.type
+          ? [
+              {
+                coding: coded ? [{ system: PARTICIPATION_TYPE_SYSTEM, ...coded }] : undefined,
+                text: participant.type
+              }
+            ]
+          : undefined,
+        individual: Object.keys(individual).length > 0 ? individual : undefined
+      };
+    }),
     note: doc.note ? [{ text: doc.note }] : undefined
   };
 };
@@ -601,7 +637,8 @@ export const appointmentDocToResource = (doc) => {
   const participant = [
     {
       actor: {
-        reference: `Patient/${doc.patient?.reference}`
+        reference: `Patient/${doc.patient?.reference}`,
+        display: doc.patientName || undefined
       },
       status: "accepted"
     }
@@ -631,6 +668,7 @@ export const appointmentDocToResource = (doc) => {
     end: toDateTime(doc.end),
     minutesDuration: doc.minutesDuration,
     participant,
+    requestedByPatient: Boolean(doc.requestedByPatient),
     reasonCode: doc.reason ? [{ text: doc.reason }] : undefined,
     comment: doc.comment
   };

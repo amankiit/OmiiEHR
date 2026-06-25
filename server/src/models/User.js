@@ -28,6 +28,23 @@ const userSchema = new mongoose.Schema(
       enum: ["admin", "practitioner", "auditor"],
       default: "practitioner"
     },
+    // Clinical specialty for practitioner accounts (a FHIR PractitionerRole-style
+    // classification). Only meaningful when role === "practitioner".
+    practitionerRole: {
+      type: String,
+      enum: [
+        "physician",
+        "dentist",
+        "clinician",
+        "nurse",
+        "surgeon",
+        "pharmacist",
+        "technician",
+        "therapist",
+        "nutritionist"
+      ],
+      default: undefined
+    },
     active: {
       type: Boolean,
       default: true

@@ -5,6 +5,8 @@ import { asyncHandler } from "../utils/asyncHandler.js";
 import { ApiError } from "../utils/apiError.js";
 import User from "../models/User.js";
 import AuditLog from "../models/AuditLog.js";
+import Patient from "../models/Patient.js";
+import { patientDocToResource } from "../services/fhirMapper.js";
 import { paginationSchema, registerSchema } from "../services/validation.js";
 
 const router = express.Router();
@@ -15,6 +17,7 @@ const formatUser = (user) => ({
   fullName: user.fullName,
   organization: user.organization,
   role: user.role,
+  practitionerRole: user.practitionerRole || null,
   active: user.active,
   lastLoginAt: user.lastLoginAt,
   createdAt: user.createdAt,
@@ -53,10 +56,30 @@ router.post(
       fullName: payload.fullName,
       organization: payload.organization,
       passwordHash,
-      role: payload.role
+      role: payload.role,
+      // Specialty only applies to practitioner accounts.
+      practitionerRole: payload.role === "practitioner" ? payload.practitionerRole : undefined
     });
 
     res.status(201).json({ user: formatUser(user) });
+  })
+);
+
+router.post(
+  "/patients/:id/approve",
+  authorize("admin"),
+  asyncHandler(async (req, res) => {
+    const patient = await Patient.findByIdAndUpdate(
+      req.params.id,
+      { registrationStatus: "active", active: true, updatedBy: req.user.sub },
+      { new: true }
+    );
+
+    if (!patient) {
+      throw new ApiError(404, "Patient not found");
+    }
+
+    res.json({ patient: patientDocToResource(patient) });
   })
 );
 

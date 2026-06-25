@@ -14,7 +14,20 @@ export const registerSchema = z.object({
     .regex(/[a-z]/, "Password must include at least one lowercase letter")
     .regex(/[0-9]/, "Password must include at least one digit")
     .regex(/[^A-Za-z0-9]/, "Password must include at least one special character"),
-  role: z.enum(["admin", "practitioner", "auditor"]).optional().default("practitioner")
+  role: z.enum(["admin", "practitioner", "auditor"]).optional().default("practitioner"),
+  practitionerRole: z
+    .enum([
+      "physician",
+      "dentist",
+      "clinician",
+      "nurse",
+      "surgeon",
+      "pharmacist",
+      "technician",
+      "therapist",
+      "nutritionist"
+    ])
+    .optional()
 });
 
 export const loginSchema = z.object({
@@ -73,6 +86,15 @@ export const patientPortalRegistrationSchema = z.object({
   city: z.string().trim().max(80).optional().default(""),
   state: z.string().trim().max(40).optional().default(""),
   postalCode: z.string().trim().max(20).optional().default("")
+});
+
+export const patientAppointmentRequestSchema = z.object({
+  pid: z.string().trim().min(1, "Patient ID is required"),
+  practitionerId: z.string().regex(/^[a-fA-F0-9]{24}$/, "practitionerId must be a valid id"),
+  start: z.string().datetime(),
+  end: z.string().datetime(),
+  serviceCategory: z.string().trim().max(80).optional().default(""),
+  reason: z.string().trim().max(200).optional().default("")
 });
 
 const observationCodingSchema = z.object({

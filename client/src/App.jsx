@@ -2,7 +2,7 @@ import { Navigate, Route, Routes } from "react-router-dom";
 import AppShell from "./components/AppShell.jsx";
 import ProtectedRoute from "./components/ProtectedRoute.jsx";
 import AuditPage from "./pages/AuditPage.jsx";
-import CommandCenterPage from "./pages/CommandCenterPage.jsx";
+import WorklistPage from "./pages/WorklistPage.jsx";
 import DashboardPage from "./pages/DashboardPage.jsx";
 import LoginPage from "./pages/LoginPage.jsx";
 import NotFoundPage from "./pages/NotFoundPage.jsx";
@@ -27,13 +27,14 @@ const App = () => {
       >
         <Route path="/" element={<DashboardPage />} />
         <Route
-          path="/command-center"
+          path="/worklist"
           element={
             <ProtectedRoute roles={["admin", "practitioner"]}>
-              <CommandCenterPage />
+              <WorklistPage />
             </ProtectedRoute>
           }
         />
+        <Route path="/command-center" element={<Navigate to="/worklist" replace />} />
         <Route path="/patients" element={<PatientsPage />} />
         <Route path="/patients/:id" element={<PatientDetailPage />} />
         <Route path="/schedule" element={<SchedulePage />} />

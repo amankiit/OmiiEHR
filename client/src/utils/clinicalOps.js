@@ -176,6 +176,11 @@ export const buildPatientRiskProfile = ({
     return normalize(allergy.criticality) === "high" || reactionSeverity === "severe";
   });
 
+  const activeAllergies = allergies.filter(
+    (allergy) =>
+      normalize(allergy?.clinicalStatus?.coding?.[0]?.code || allergy?.clinicalStatus?.text || "active") === "active"
+  );
+
   const latestSystolic = latestObservationByCodes(observations, SYSTOLIC_BP_CODES);
   const latestDiastolic = latestObservationByCodes(observations, DIASTOLIC_BP_CODES);
   const latestA1c = latestObservationByCodes(observations, A1C_CODES);
@@ -237,7 +242,13 @@ export const buildPatientRiskProfile = ({
     });
   }
 
-  if (!hasUpcomingAppointmentWithin(appointments, 60)) {
+  // Only flag a missing follow-up when the patient has some clinical context to
+  // follow up on — an active condition, an active allergy, or an open/assigned task.
+  // Patients with none of these are not surfaced with this care gap.
+  const hasClinicalContext =
+    activeConditions.length > 0 || activeAllergies.length > 0 || tasks.length > 0;
+
+  if (hasClinicalContext && !hasUpcomingAppointmentWithin(appointments, 60)) {
     careGaps.push({
       severity: "low",
       title: "No upcoming follow-up appointment",
@@ -329,10 +340,25 @@ export const buildPatientRiskProfile = ({
       a1c: a1cValue
     },
     activeConditionCount: activeConditions.length,
+    activeAllergyCount: activeAllergies.length,
     activeMedicationCount: activeMedications.length,
     openTaskCount: openTasks.length,
     overdueTaskCount: overdueTasks.length
   };
+};
+
+export const calculateDayNoShowRate = (appointments, day = new Date()) => {
+  const sameDay = appointments.filter((appointment) => {
+    const start = toDate(appointment.start);
+    return Boolean(start && start.toDateString() === day.toDateString());
+  });
+
+  if (sameDay.length === 0) {
+    return 0;
+  }
+
+  const noShows = sameDay.filter((appointment) => normalize(appointment.status) === "noshow");
+  return Math.round((noShows.length / sameDay.length) * 1000) / 10;
 };
 
 export const calculateNoShowRate = (appointments, lookbackDays = 90, now = new Date()) => {

@@ -29,6 +29,16 @@ const patientSchema = new mongoose.Schema(
       type: Boolean,
       default: true
     },
+    registrationStatus: {
+      type: String,
+      enum: ["requested", "active"],
+      default: "active"
+    },
+    registrationSource: {
+      type: String,
+      enum: ["staff", "portal"],
+      default: "staff"
+    },
     gender: {
       type: String,
       enum: ["male", "female", "other", "unknown"],

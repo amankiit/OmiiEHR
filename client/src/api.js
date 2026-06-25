@@ -54,13 +54,19 @@ export const authApi = {
 
 export const publicApi = {
   registerPatient: (payload) =>
-    apiRequest("/public/patient-register", { method: "POST", body: payload })
+    apiRequest("/public/patient-register", { method: "POST", body: payload }),
+  listPractitioners: () => apiRequest("/public/practitioners"),
+  getAvailability: (practitionerId, date) =>
+    apiRequest(`/public/availability${toQueryString({ practitionerId, date })}`),
+  requestAppointment: (payload) =>
+    apiRequest("/public/appointment-request", { method: "POST", body: payload })
 };
 
 export const fhirApi = {
   capability: (token) => apiRequest("/fhir/metadata", { token }),
 
   listPatients: (token) => apiRequest("/fhir/Patient", { token }),
+  searchPatients: (token, name) => apiRequest(`/fhir/Patient${toQueryString({ name })}`, { token }),
   getPatient: (token, id) => apiRequest(`/fhir/Patient/${id}`, { token }),
   getPatientEverything: (token, id) => apiRequest(`/fhir/Patient/${id}/$everything`, { token }),
   createPatient: (token, resource) =>
@@ -72,26 +78,36 @@ export const fhirApi = {
     apiRequest(`/fhir/Observation${toQueryString(params)}`, { token }),
   createObservation: (token, resource) =>
     apiRequest("/fhir/Observation", { method: "POST", token, body: resource }),
+  updateObservation: (token, id, resource) =>
+    apiRequest(`/fhir/Observation/${id}`, { method: "PUT", token, body: resource }),
 
   listConditions: (token, params = {}) =>
     apiRequest(`/fhir/Condition${toQueryString(params)}`, { token }),
   createCondition: (token, resource) =>
     apiRequest("/fhir/Condition", { method: "POST", token, body: resource }),
+  updateCondition: (token, id, resource) =>
+    apiRequest(`/fhir/Condition/${id}`, { method: "PUT", token, body: resource }),
 
   listAllergies: (token, params = {}) =>
     apiRequest(`/fhir/AllergyIntolerance${toQueryString(params)}`, { token }),
   createAllergy: (token, resource) =>
     apiRequest("/fhir/AllergyIntolerance", { method: "POST", token, body: resource }),
+  updateAllergy: (token, id, resource) =>
+    apiRequest(`/fhir/AllergyIntolerance/${id}`, { method: "PUT", token, body: resource }),
 
   listMedicationRequests: (token, params = {}) =>
     apiRequest(`/fhir/MedicationRequest${toQueryString(params)}`, { token }),
   createMedicationRequest: (token, resource) =>
     apiRequest("/fhir/MedicationRequest", { method: "POST", token, body: resource }),
+  updateMedicationRequest: (token, id, resource) =>
+    apiRequest(`/fhir/MedicationRequest/${id}`, { method: "PUT", token, body: resource }),
 
   listEncounters: (token, params = {}) =>
     apiRequest(`/fhir/Encounter${toQueryString(params)}`, { token }),
   createEncounter: (token, resource) =>
     apiRequest("/fhir/Encounter", { method: "POST", token, body: resource }),
+  updateEncounter: (token, id, resource) =>
+    apiRequest(`/fhir/Encounter/${id}`, { method: "PUT", token, body: resource }),
 
   listAppointments: (token, params = {}) =>
     apiRequest(`/fhir/Appointment${toQueryString(params)}`, { token }),
@@ -112,5 +128,7 @@ export const adminApi = {
   listPractitioners: (token) => apiRequest("/admin/practitioners", { token }),
   createUser: (token, payload) =>
     apiRequest("/admin/users", { method: "POST", token, body: payload }),
+  approvePatient: (token, id) =>
+    apiRequest(`/admin/patients/${id}/approve`, { method: "POST", token }),
   listAuditLogs: (token, params = "") => apiRequest(`/admin/audit-logs${params}`, { token })
 };

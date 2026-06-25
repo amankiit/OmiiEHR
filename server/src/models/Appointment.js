@@ -40,6 +40,11 @@ const appointmentSchema = new mongoose.Schema(
         required: true
       }
     },
+    patientName: String,
+    requestedByPatient: {
+      type: Boolean,
+      default: false
+    },
     practitionerUserId: {
       type: mongoose.Schema.Types.ObjectId,
       ref: "User",

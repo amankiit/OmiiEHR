@@ -49,6 +49,12 @@ const encounterSchema = new mongoose.Schema(
         required: true
       }
     },
+    appointment: {
+      reference: {
+        type: mongoose.Schema.Types.ObjectId,
+        ref: "Appointment"
+      }
+    },
     periodStart: Date,
     periodEnd: Date,
     reasonCode: {
@@ -67,6 +73,7 @@ const encounterSchema = new mongoose.Schema(
 );
 
 encounterSchema.index({ "subject.reference": 1, createdAt: -1 });
+encounterSchema.index({ "appointment.reference": 1 });
 encounterSchema.index({ periodStart: -1 });
 
 const Encounter = mongoose.model("Encounter", encounterSchema);

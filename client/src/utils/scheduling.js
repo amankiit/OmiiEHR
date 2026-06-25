@@ -19,7 +19,8 @@ export const SERVICE_CATEGORY_OPTIONS = [
   "Immunization"
 ];
 
-const nonBlockingStatuses = new Set(["cancelled", "noshow", "entered-in-error"]);
+// Only confirmed appointments occupy a slot; pending patient requests do not block.
+const blockingStatuses = new Set(["booked", "arrived", "checked-in", "fulfilled"]);
 const bookableWeekdays = new Set([1, 2, 3, 4, 5, 6]);
 
 const pad = (value) => String(value).padStart(2, "0");
@@ -127,7 +128,7 @@ export const getPractitionerIdFromAppointment = (appointment) => {
   return reference.startsWith("Practitioner/") ? reference.slice("Practitioner/".length) : "";
 };
 
-export const isBlockingAppointmentStatus = (status) => !nonBlockingStatuses.has(status || "");
+export const isBlockingAppointmentStatus = (status) => blockingStatuses.has(status || "");
 
 export const isSlotUnavailable = ({ appointments, practitionerId, dateInput, slotValue }) => {
   if (!isBookableDateInput(dateInput)) {

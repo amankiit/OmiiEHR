@@ -4,6 +4,7 @@ import NavBar from "./NavBar.jsx";
 import GlobalSearch from "./GlobalSearch.jsx";
 import Notifications from "./Notifications.jsx";
 import Icon from "./Icon.jsx";
+import AgentChat from "./AgentChat.jsx";
 
 const LABELS = {
   patients: "Patients",
@@ -83,6 +84,8 @@ const AppShell = () => {
           <Outlet />
         </main>
       </div>
+
+      <AgentChat />
     </div>
   );
 };

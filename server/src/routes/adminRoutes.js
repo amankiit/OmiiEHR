@@ -120,12 +120,31 @@ router.get(
       filter.actorEmail = String(req.query.actorEmail).toLowerCase();
     }
 
+    if (req.query.initiator === "user" || req.query.initiator === "ai") {
+      filter.initiator = req.query.initiator;
+    }
+
+    // Server-side sorting over the whole result set (so pagination stays correct).
+    // Only whitelisted fields are sortable; `_id` is a stable tiebreaker.
+    const sortableFields = new Set([
+      "createdAt",
+      "actorEmail",
+      "initiator",
+      "action",
+      "resourceType",
+      "statusCode",
+      "outcome",
+      "path"
+    ]);
+    const sortField = sortableFields.has(String(req.query.sort)) ? String(req.query.sort) : "createdAt";
+    const sortDir = req.query.dir === "asc" ? 1 : -1;
+
     const skip = (pagination.page - 1) * pagination.limit;
 
     const [total, logs] = await Promise.all([
       AuditLog.countDocuments(filter),
       AuditLog.find(filter)
-        .sort({ createdAt: -1 })
+        .sort({ [sortField]: sortDir, _id: sortDir })
         .skip(skip)
         .limit(pagination.limit)
         .lean()

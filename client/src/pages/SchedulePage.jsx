@@ -13,7 +13,7 @@ import {
   practitionerHasAvailableSlot,
   toDateInputValue
 } from "../utils/scheduling.js";
-import { SERVICE_CATEGORY_OPTIONS, ENCOUNTER_TYPES, PRACTITIONER_ROLES } from "../utils/catalog.js";
+import { SERVICE_CATEGORY_OPTIONS, ENCOUNTER_TYPES, PRACTITIONER_ROLES, PRACTITIONER_ROLE_LABELS } from "../utils/catalog.js";
 import { bundleToResources, patientFullName, patientIdentifier, reasonText } from "../utils/fhir.js";
 import { formatTime, relativeDay } from "../utils/display.js";
 import { useAuth } from "../context/AuthContext.jsx";
@@ -69,6 +69,7 @@ const SchedulePage = () => {
   const [viewDate, setViewDate] = useState(getNextBookableDateInput());
   const [statusFilter, setStatusFilter] = useState("all");
   const [practitionerTypeFilter, setPractitionerTypeFilter] = useState("all");
+  const [practitionerIdFilter, setPractitionerIdFilter] = useState("all");
   const [nameSearch, setNameSearch] = useState("");
   const [modalOpen, setModalOpen] = useState(false);
   const [form, setForm] = useState(emptyForm);
@@ -200,6 +201,22 @@ const SchedulePage = () => {
     () => (user.role === "practitioner" ? practitioners.filter((p) => p.id === user.id) : practitioners),
     [practitioners, user.id, user.role]
   );
+
+  // Practitioners belonging to the selected category — feeds the exact-name filter dropdown.
+  const filterPractitioners = useMemo(
+    () =>
+      practitionerTypeFilter === "all"
+        ? scopedPractitioners
+        : scopedPractitioners.filter((p) => p.practitionerRole === practitionerTypeFilter),
+    [scopedPractitioners, practitionerTypeFilter]
+  );
+
+  // Reset the exact-name filter whenever the category changes or the chosen name leaves the list.
+  useEffect(() => {
+    setPractitionerIdFilter((prev) =>
+      prev === "all" || filterPractitioners.some((p) => p.id === prev) ? prev : "all"
+    );
+  }, [filterPractitioners]);
 
   const availablePractitioners = useMemo(
     () =>
@@ -420,8 +437,12 @@ const SchedulePage = () => {
   const dayAppointments = useMemo(() => {
     const term = nameSearch.trim().toLowerCase();
     return appointments.filter((appointment) => {
-      const practitioner = practitionerMap.get(getPractitionerIdFromAppointment(appointment));
+      const practitionerId = getPractitionerIdFromAppointment(appointment);
+      const practitioner = practitionerMap.get(practitionerId);
       if (practitionerTypeFilter !== "all" && practitioner?.practitionerRole !== practitionerTypeFilter) {
+        return false;
+      }
+      if (practitionerIdFilter !== "all" && practitionerId !== practitionerIdFilter) {
         return false;
       }
       if (term) {
@@ -437,7 +458,7 @@ const SchedulePage = () => {
       }
       return true;
     });
-  }, [appointments, practitionerTypeFilter, nameSearch, practitionerMap, patientMap]);
+  }, [appointments, practitionerTypeFilter, practitionerIdFilter, nameSearch, practitionerMap, patientMap]);
 
   // The table additionally applies the status filter.
   const filtered = useMemo(
@@ -447,7 +468,9 @@ const SchedulePage = () => {
 
   const snapshot = useMemo(() => {
     const practitionerCount =
-      practitionerTypeFilter === "all"
+      practitionerIdFilter !== "all"
+        ? 1
+        : practitionerTypeFilter === "all"
         ? Math.max(scopedPractitioners.length, 1)
         : Math.max(scopedPractitioners.filter((p) => p.practitionerRole === practitionerTypeFilter).length, 1);
     const totalSlots = buildDailySlots().length * practitionerCount;
@@ -463,7 +486,7 @@ const SchedulePage = () => {
       // Exact no-show rate for the selected day only.
       noShowRate: dayAppointments.length ? Math.round((noShow / dayAppointments.length) * 1000) / 10 : 0
     };
-  }, [dayAppointments, practitionerTypeFilter, scopedPractitioners]);
+  }, [dayAppointments, practitionerTypeFilter, practitionerIdFilter, scopedPractitioners]);
 
   const apptPatientActor = (appointment) =>
     appointment.participant?.find((p) => String(p.actor?.reference || "").startsWith("Patient/"))?.actor;
@@ -600,6 +623,25 @@ const SchedulePage = () => {
                   {PRACTITIONER_ROLES.map((role) => (
                     <option key={role.value} value={role.value}>
                       {role.plural}
+                    </option>
+                  ))}
+                </select>
+              ) : null}
+              {user.role === "admin" ? (
+                <select
+                  className="input"
+                  style={{ width: 180 }}
+                  value={practitionerIdFilter}
+                  onChange={(event) => setPractitionerIdFilter(event.target.value)}
+                >
+                  <option value="all">
+                    {practitionerTypeFilter === "all"
+                      ? "Any name"
+                      : `Any ${PRACTITIONER_ROLE_LABELS[practitionerTypeFilter]?.toLowerCase() || "practitioner"}`}
+                  </option>
+                  {filterPractitioners.map((p) => (
+                    <option key={p.id} value={p.id}>
+                      {p.fullName}
                     </option>
                   ))}
                 </select>

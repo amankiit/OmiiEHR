@@ -33,10 +33,18 @@ export const requestAuditTrail = (req, res, next) => {
     const { resourceType, resourceId } = parseRouteContext(req.originalUrl);
     const outcome = res.statusCode >= 200 && res.statusCode < 400 ? "success" : "failure";
 
+    // The AI assistant's internal calls set these headers (see agent/fhirClient.js),
+    // so we can tell apart an action the user took directly from one the assistant
+    // took on their behalf.
+    const initiator = req.get("x-initiated-by") === "ai" ? "ai" : "user";
+    const agentSessionId = req.get("x-agent-session") || undefined;
+
     AuditLog.create({
       actorUserId: req.user?.sub,
       actorEmail: req.user?.email,
       actorRole: req.user?.role,
+      initiator,
+      agentSessionId,
       action: methodToAction[req.method] || "unknown",
       resourceType,
       resourceId,

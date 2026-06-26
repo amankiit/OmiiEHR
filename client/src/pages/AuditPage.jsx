@@ -7,15 +7,16 @@ import { formatDateTime } from "../utils/fhir.js";
 const OUTCOME_TONE = { success: "success", failure: "critical", error: "critical", denied: "warning" };
 const ACTION_TONE = { create: "accent", update: "primary", read: "neutral", delete: "critical", search: "neutral" };
 
-// Sortable columns: label drives the header, accessor returns a comparable value.
+// Sortable columns (sorting is performed server-side over the whole log).
 const COLUMNS = [
-  { key: "createdAt", label: "Timestamp", accessor: (e) => (e.createdAt ? new Date(e.createdAt).getTime() : 0) },
-  { key: "actorEmail", label: "Actor", accessor: (e) => (e.actorEmail || "").toLowerCase() },
-  { key: "action", label: "Action", accessor: (e) => (e.action || "").toLowerCase() },
-  { key: "resourceType", label: "Resource", accessor: (e) => (e.resourceType || "").toLowerCase() },
-  { key: "statusCode", label: "Status", accessor: (e) => Number(e.statusCode) || 0 },
-  { key: "outcome", label: "Outcome", accessor: (e) => (e.outcome || "").toLowerCase() },
-  { key: "path", label: "Path", accessor: (e) => (e.path || "").toLowerCase() }
+  { key: "createdAt", label: "Timestamp" },
+  { key: "actorEmail", label: "Actor" },
+  { key: "initiator", label: "Source" },
+  { key: "action", label: "Action" },
+  { key: "resourceType", label: "Resource" },
+  { key: "statusCode", label: "Status" },
+  { key: "outcome", label: "Outcome" },
+  { key: "path", label: "Path" }
 ];
 
 const AuditPage = () => {
@@ -27,11 +28,16 @@ const AuditPage = () => {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [outcomeFilter, setOutcomeFilter] = useState("");
+  const [initiatorFilter, setInitiatorFilter] = useState("");
   const [search, setSearch] = useState("");
   const [sort, setSort] = useState({ key: "createdAt", dir: "desc" });
 
-  const toggleSort = (key) =>
+  // Sorting is server-side (it must order the whole log, not just the current page),
+  // so changing the sort returns to page 1 and refetches.
+  const toggleSort = (key) => {
     setSort((prev) => ({ key, dir: prev.key === key && prev.dir === "asc" ? "desc" : "asc" }));
+    setPage(1);
+  };
 
   useEffect(() => {
     setLoading(true);
@@ -41,6 +47,11 @@ const AuditPage = () => {
         if (outcomeFilter) {
           params.set("outcome", outcomeFilter);
         }
+        if (initiatorFilter) {
+          params.set("initiator", initiatorFilter);
+        }
+        params.set("sort", sort.key);
+        params.set("dir", sort.dir);
         const response = await adminApi.listAuditLogs(token, `?${params.toString()}`);
         setRows(response.data || []);
         setTotal(response.total || 0);
@@ -51,31 +62,22 @@ const AuditPage = () => {
       }
     };
     load();
-  }, [page, limit, token, outcomeFilter]);
+  }, [page, limit, token, outcomeFilter, initiatorFilter, sort]);
 
   const totalPages = Math.max(1, Math.ceil(total / limit));
 
+  // Rows arrive already sorted by the server; the search box only narrows the
+  // current page (it's labelled "Filter this page…"), so it must not re-sort.
   const visibleRows = useMemo(() => {
     const term = search.trim().toLowerCase();
-    const filtered = !term
-      ? rows
-      : rows.filter((entry) =>
-          [entry.actorEmail, entry.action, entry.resourceType, entry.path]
-            .join(" ")
-            .toLowerCase()
-            .includes(term)
-        );
-
-    const column = COLUMNS.find((col) => col.key === sort.key) || COLUMNS[0];
-    const factor = sort.dir === "asc" ? 1 : -1;
-    return [...filtered].sort((a, b) => {
-      const av = column.accessor(a);
-      const bv = column.accessor(b);
-      if (av < bv) return -1 * factor;
-      if (av > bv) return 1 * factor;
-      return 0;
-    });
-  }, [rows, search, sort]);
+    if (!term) return rows;
+    return rows.filter((entry) =>
+      [entry.actorEmail, entry.action, entry.resourceType, entry.path]
+        .join(" ")
+        .toLowerCase()
+        .includes(term)
+    );
+  }, [rows, search]);
 
   return (
     <section className="stack">
@@ -102,6 +104,19 @@ const AuditPage = () => {
                 value={search}
                 onChange={(event) => setSearch(event.target.value)}
               />
+              <select
+                className="input"
+                style={{ width: 150 }}
+                value={initiatorFilter}
+                onChange={(event) => {
+                  setInitiatorFilter(event.target.value);
+                  setPage(1);
+                }}
+              >
+                <option value="">All sources</option>
+                <option value="user">User</option>
+                <option value="ai">AI assistant</option>
+              </select>
               <select
                 className="input"
                 style={{ width: 150 }}
@@ -151,6 +166,18 @@ const AuditPage = () => {
                       <td>
                         {entry.actorEmail || "Unknown"}
                         <span className="sub">{entry.actorRole || "-"}</span>
+                      </td>
+                      <td>
+                        {entry.initiator === "ai" ? (
+                          <Badge tone="accent" dot>
+                            AI assistant
+                          </Badge>
+                        ) : (
+                          <Badge tone="neutral">User</Badge>
+                        )}
+                        {entry.initiator === "ai" && entry.agentSessionId ? (
+                          <span className="sub">session {String(entry.agentSessionId).slice(-6)}</span>
+                        ) : null}
                       </td>
                       <td>
                         <Badge tone={ACTION_TONE[entry.action] || "neutral"}>{entry.action}</Badge>

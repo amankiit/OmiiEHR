@@ -128,6 +128,65 @@ export const fhirApi = {
     apiRequest(`/fhir/Task/${id}`, { method: "PUT", token, body: resource })
 };
 
+// Streams an SSE response from the agent endpoints, invoking onEvent(type, data)
+// for each event. Returns once the stream closes. Throws on HTTP/JSON setup errors.
+const streamAgent = async (path, { token, body, onEvent }) => {
+  const response = await fetch(`${API_BASE_URL}${path}`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      ...(token ? { Authorization: `Bearer ${token}` } : {})
+    },
+    body: JSON.stringify(body)
+  });
+
+  if (!response.ok || !response.body) {
+    await readResponse(response); // throws a useful error for non-2xx
+    return;
+  }
+
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = "";
+
+  // SSE events are separated by a blank line; each has `event:` and `data:` lines.
+  for (;;) {
+    const { value, done } = await reader.read();
+    if (done) break;
+    buffer += decoder.decode(value, { stream: true });
+
+    let boundary;
+    while ((boundary = buffer.indexOf("\n\n")) !== -1) {
+      const raw = buffer.slice(0, boundary);
+      buffer = buffer.slice(boundary + 2);
+
+      let eventType = "message";
+      const dataLines = [];
+      for (const line of raw.split("\n")) {
+        if (line.startsWith("event:")) eventType = line.slice(6).trim();
+        else if (line.startsWith("data:")) dataLines.push(line.slice(5).trim());
+      }
+      if (!dataLines.length) continue;
+      let data = {};
+      try {
+        data = JSON.parse(dataLines.join("\n"));
+      } catch {
+        data = {};
+      }
+      onEvent(eventType, data);
+    }
+  }
+};
+
+export const agentApi = {
+  chat: (token, { sessionId, message, context, onEvent }) =>
+    streamAgent("/agent/chat", { token, body: { sessionId, message, context }, onEvent }),
+  confirm: (token, { sessionId, approved, onEvent }) =>
+    streamAgent("/agent/confirm", { token, body: { sessionId, approved }, onEvent }),
+  listSessions: (token) => apiRequest("/agent/sessions", { token }),
+  getSession: (token, id) => apiRequest(`/agent/sessions/${id}`, { token })
+};
+
 export const adminApi = {
   listUsers: (token) => apiRequest("/admin/users", { token }),
   listPractitioners: (token) => apiRequest("/admin/practitioners", { token }),

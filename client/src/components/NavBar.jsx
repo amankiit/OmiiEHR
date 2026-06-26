@@ -69,7 +69,12 @@ const NavBar = ({ open, onNavigate }) => {
         <div className="sidebar-user">
           <span className="avatar">{initialsOf(user?.fullName)}</span>
           <div className="grow">
-            <p className="sidebar-user-name">{user?.fullName}</p>
+            <p className="sidebar-user-name">
+              {user?.fullName}
+              <span className="sidebar-user-role">
+                {user?.role}
+              </span>
+            </p>
             <p className="sidebar-user-email">{user?.email}</p>
           </div>
         </div>

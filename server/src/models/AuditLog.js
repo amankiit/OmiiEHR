@@ -8,6 +8,15 @@ const auditLogSchema = new mongoose.Schema(
     },
     actorEmail: String,
     actorRole: String,
+    // Who/what triggered the action. "user" = direct UI/API request by the actor;
+    // "ai" = the AI assistant acting on the actor's behalf (still bounded by the
+    // actor's own permissions). agentSessionId links an AI action to its conversation.
+    initiator: {
+      type: String,
+      enum: ["user", "ai"],
+      default: "user"
+    },
+    agentSessionId: String,
     action: {
       type: String,
       required: true
